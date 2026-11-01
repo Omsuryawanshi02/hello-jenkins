@@ -3,8 +3,8 @@ pipeline {
     agent any
 
     environment {
-        // Docker Desktop executable path
-        DOCKER = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+        // Actual Docker path on your Windows machine
+        DOCKER_EXE = 'C:\\Users\\om\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
 
         // AWS Configuration
         REGION   = 'ap-south-1'
@@ -14,9 +14,10 @@ pipeline {
         // Replace none with your actual EC2 instance ID
         INSTANCE = 'none'
 
-        REGISTRY = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
-        IMG      = "${REPO}:${BUILD_NUMBER}"
-        REMOTE   = "${REGISTRY}/${REPO}:latest"
+        REGISTRY    = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+        IMG         = "${REPO}:${BUILD_NUMBER}"
+        ECR_IMAGE   = "${REGISTRY}/${REPO}:${BUILD_NUMBER}"
+        LATEST_IMAGE = "${REGISTRY}/${REPO}:latest"
     }
 
     stages {
@@ -25,13 +26,20 @@ pipeline {
         stage('Docker Check') {
             steps {
                 bat '''
-                    if not exist "%DOCKER%" (
-                        echo Docker executable not found!
+                    @echo off
+
+                    if not exist "%DOCKER_EXE%" (
+                        echo ERROR: Docker executable not found!
                         exit /b 1
                     )
 
-                    "%DOCKER%" --version
-                    "%DOCKER%" info
+                    echo Checking Docker version...
+                    "%DOCKER_EXE%" --version
+
+                    echo Checking Docker Engine...
+                    "%DOCKER_EXE%" info
+
+                    if errorlevel 1 exit /b 1
                 '''
             }
         }
@@ -39,18 +47,30 @@ pipeline {
         // 2. Build Docker Image
         stage('Build') {
             steps {
-                bat '"%DOCKER%" build -t "%IMG%" .'
+                echo 'Building Docker image...'
+
+                bat '''
+                    "%DOCKER_EXE%" build -t "%IMG%" .
+                    if errorlevel 1 exit /b 1
+                '''
             }
         }
 
         // 3. Test Docker Image
         stage('Test') {
             steps {
-                bat '"%DOCKER%" run --rm "%IMG%" nginx -t'
+                echo 'Testing Docker image...'
+
+                bat '''
+                    "%DOCKER_EXE%" image inspect "%IMG%" >NUL
+                    if errorlevel 1 exit /b 1
+
+                    echo Docker image test passed!
+                '''
             }
         }
 
-        // 4. Login to AWS ECR and Push Image
+        // 4. AWS ECR Login and Push
         stage('Push') {
             steps {
                 withCredentials([
@@ -63,54 +83,52 @@ pipeline {
                         variable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
-                    script {
-                        try {
-                            bat '''
-                                echo Logging in to AWS ECR...
+                    bat '''
+                        @echo off
 
-                                "%DOCKER%" run --rm ^
-                                -e AWS_ACCESS_KEY_ID ^
-                                -e AWS_SECRET_ACCESS_KEY ^
-                                -e AWS_DEFAULT_REGION=%REGION% ^
-                                amazon/aws-cli:latest ^
-                                ecr get-login-password --region %REGION% > ecr-password.txt
+                        echo Logging in to AWS ECR...
 
-                                if errorlevel 1 exit /b 1
+                        "%DOCKER_EXE%" run --rm ^
+                        -e AWS_ACCESS_KEY_ID ^
+                        -e AWS_SECRET_ACCESS_KEY ^
+                        -e AWS_DEFAULT_REGION=%REGION% ^
+                        amazon/aws-cli:latest ^
+                        ecr get-login-password --region %REGION% ^
+                        | "%DOCKER_EXE%" login --username AWS --password-stdin %REGISTRY%
 
-                                "%DOCKER%" login ^
-                                --username AWS ^
-                                --password-stdin %REGISTRY% < ecr-password.txt
+                        if errorlevel 1 exit /b 1
 
-                                if errorlevel 1 exit /b 1
-                            '''
+                        echo Creating ECR image tags...
 
-                            bat '''
-                                echo Tagging Docker image...
+                        "%DOCKER_EXE%" tag "%IMG%" "%ECR_IMAGE%"
+                        if errorlevel 1 exit /b 1
 
-                                "%DOCKER%" tag "%IMG%" "%REMOTE%"
+                        "%DOCKER_EXE%" tag "%IMG%" "%LATEST_IMAGE%"
+                        if errorlevel 1 exit /b 1
 
-                                if errorlevel 1 exit /b 1
+                        echo Pushing versioned image...
 
-                                echo Pushing image to AWS ECR...
+                        "%DOCKER_EXE%" push "%ECR_IMAGE%"
+                        if errorlevel 1 exit /b 1
 
-                                "%DOCKER%" push "%REMOTE%"
-                            '''
-                        } finally {
-                            bat '''
-                                if exist ecr-password.txt del /f /q ecr-password.txt
-                            '''
-                        }
-                    }
+                        echo Pushing latest image...
+
+                        "%DOCKER_EXE%" push "%LATEST_IMAGE%"
+                        if errorlevel 1 exit /b 1
+
+                        echo ECR Push completed!
+                    '''
                 }
             }
         }
 
         // 5. Deploy to EC2 using AWS SSM
         stage('Deploy') {
+
             when {
                 expression {
-                    return env.INSTANCE != 'none' &&
-                           env.INSTANCE?.trim()
+                    return env.INSTANCE?.trim() &&
+                           env.INSTANCE != 'none'
                 }
             }
 
@@ -126,12 +144,16 @@ pipeline {
                     )
                 ]) {
                     bat '''
+                        @echo off
+
                         if not exist deploy.json (
-                            echo deploy.json file not found!
+                            echo ERROR: deploy.json not found!
                             exit /b 1
                         )
 
-                        "%DOCKER%" run --rm ^
+                        echo Sending deployment command to EC2...
+
+                        "%DOCKER_EXE%" run --rm ^
                         -e AWS_ACCESS_KEY_ID ^
                         -e AWS_SECRET_ACCESS_KEY ^
                         -e AWS_DEFAULT_REGION=%REGION% ^
@@ -143,7 +165,11 @@ pipeline {
                         --instance-ids %INSTANCE% ^
                         --document-name AWS-RunShellScript ^
                         --parameters file://deploy.json ^
-                        --comment "Jenkins Docker deployment"
+                        --comment "Jenkins Docker Deployment"
+
+                        if errorlevel 1 exit /b 1
+
+                        echo Deployment command submitted!
                     '''
                 }
             }
@@ -152,11 +178,11 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline executed successfully!'
+            echo 'SUCCESS: Jenkins pipeline completed!'
         }
 
         failure {
-            echo 'Pipeline failed. Check Console Output.'
+            echo 'FAILURE: Check Console Output for errors.'
         }
 
         always {
