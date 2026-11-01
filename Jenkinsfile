@@ -1,133 +1,110 @@
+def run(cmd) {
+    if (isUnix()) {
+        sh cmd
+    } else {
+        bat cmd
+    }
+}
+
+def ecrLogin() {
+    withCredentials([
+        string(credentialsId: 'aws-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+        string(credentialsId: 'aws-secret', variable: 'AWS_SECRET_ACCESS_KEY')
+    ]) {
+        run("""
+            docker run --rm ^
+            -e AWS_ACCESS_KEY_ID ^
+            -e AWS_SECRET_ACCESS_KEY ^
+            -e AWS_DEFAULT_REGION=${env.REGION} ^
+            amazon/aws-cli:latest ^
+            ecr get-login-password --region ${env.REGION} ^
+            > ecr-password.txt
+        """)
+
+        run("""
+            docker login --username AWS --password-stdin ${env.REGISTRY} < ecr-password.txt
+        """)
+
+        run("del ecr-password.txt")
+    }
+}
+
+def deploy() {
+    withCredentials([
+        string(credentialsId: 'aws-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+        string(credentialsId: 'aws-secret', variable: 'AWS_SECRET_ACCESS_KEY')
+    ]) {
+        run("""
+            docker run --rm ^
+            -e AWS_ACCESS_KEY_ID ^
+            -e AWS_SECRET_ACCESS_KEY ^
+            -e AWS_DEFAULT_REGION=${env.REGION} ^
+            -v "%WORKSPACE%:/workspace" ^
+            -w /workspace ^
+            amazon/aws-cli:latest ^
+            ssm send-command ^
+            --region ${env.REGION} ^
+            --instance-ids ${env.INSTANCE} ^
+            --document-name AWS-RunShellScript ^
+            --parameters file://deploy.json
+        """)
+    }
+}
 
 pipeline {
-
     agent any
 
     environment {
-        REGION       = 'eu-north-1'
-        ACCOUNT      = '525830808827'
-        ECR_REPOSITORY = 'jenkins-web'
+        REGION   = 'ap-south-1'
+        ACCOUNT  = '525830808827'
+        REPO     = 'hello-jenkins'
+        INSTANCE = 'none'
 
-        REGISTRY = '525830808827.dkr.ecr.ap-south-1.amazonaws.com'
-
-        IMAGE_NAME = 'hello-jenkins'
-
-        DOCKER_EXE = 'C:\\Users\\om\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
-
-        // Replace with your actual EC2 instance ID
-       INSTANCE_ID = 'none'
+        REGISTRY = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+        IMG      = "${REPO}:${BUILD_NUMBER}"
+        REMOTE   = "${REGISTRY}/${REPO}:latest"
     }
 
     stages {
 
-        // 1. Docker Check
-        stage('Docker Check') {
-            steps {
-                bat "\"${env.DOCKER_EXE}\" --version"
-                bat "\"${env.DOCKER_EXE}\" info"
-            }
-        }
-
-        // 2. Build Docker Image
         stage('Build') {
             steps {
-                bat """
-                    "${env.DOCKER_EXE}" build -t ${env.IMAGE_NAME}:${env.BUILD_NUMBER} .
-                """
+                script {
+                    run "docker build -t ${IMG} ."
+                }
             }
         }
 
-        // 3. Test Docker Image
         stage('Test') {
             steps {
-                bat """
-                    "${env.DOCKER_EXE}" run --rm ${env.IMAGE_NAME}:${env.BUILD_NUMBER} nginx -t
-                """
-            }
-        }
-
-        // 4. AWS Authentication
-        stage('AWS Authentication') {
-            steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'aws-key-id',
-                        variable: 'AWS_ACCESS_KEY_ID'
-                    ),
-                    string(
-                        credentialsId: 'aws-secret',
-                        variable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    bat '''
-                        aws sts get-caller-identity
-                    '''
-
-                    echo 'AWS authentication successful!'
+                script {
+                    run "docker run --rm ${IMG} nginx -t"
                 }
             }
         }
 
-        // 5. Push to AWS ECR
-        stage('Push to AWS ECR') {
+        stage('Push') {
             steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'aws-key-id',
-                        variable: 'AWS_ACCESS_KEY_ID'
-                    ),
-                    string(
-                        credentialsId: 'aws-secret',
-                        variable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    bat """
-                        aws ecr get-login-password --region ${env.REGION} | "${env.DOCKER_EXE}" login --username AWS --password-stdin ${env.REGISTRY}
+                script {
+                    ecrLogin()
 
-                        "${env.DOCKER_EXE}" tag ${env.IMAGE_NAME}:${env.BUILD_NUMBER} ${env.REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}
+                    run "docker tag ${IMG} ${REMOTE}"
 
-                        "${env.DOCKER_EXE}" tag ${env.IMAGE_NAME}:${env.BUILD_NUMBER} ${env.REGISTRY}/${env.ECR_REPOSITORY}:latest
-
-                        "${env.DOCKER_EXE}" push ${env.REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}
-
-                        "${env.DOCKER_EXE}" push ${env.REGISTRY}/${env.ECR_REPOSITORY}:latest
-                    """
-
-                    echo 'Successfully pushed images to AWS ECR!'
+                    run "docker push ${REMOTE}"
                 }
             }
         }
 
-        // 6. Deploy to EC2 using SSM
-        stage('Deploy to EC2') {
-
+        stage('Deploy') {
             when {
-                expression {
-                    return env.INSTANCE_ID?.startsWith('i-')
+                not {
+                    environment name: 'INSTANCE', value: 'none'
                 }
             }
 
             steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'aws-key-id',
-                        variable: 'AWS_ACCESS_KEY_ID'
-                    ),
-                    string(
-                        credentialsId: 'aws-secret',
-                        variable: 'AWS_SECRET_ACCESS_KEY'
-                    )
-                ]) {
-                    bat '''
-                        aws ssm send-command ^
-                        --region %REGION% ^
-                        --instance-ids %INSTANCE_ID% ^
-                        --document-name AWS-RunShellScript ^
-                        --parameters file://deploy.json ^
-                        --comment "Deploy hello-jenkins application"
-                    '''
-
-                    echo 'EC2 deployment command submitted!'
+                script {
+                    deploy()
                 }
             }
         }
@@ -135,15 +112,15 @@ pipeline {
 
     post {
         success {
-            echo 'SUCCESS: Jenkins CI/CD pipeline completed!'
+            echo 'Pipeline completed successfully!'
         }
 
         failure {
-            echo 'FAILED: Check Jenkins Console Output.'
+            echo 'Pipeline failed. Check Console Output.'
         }
 
         always {
-            echo 'Jenkins pipeline execution completed.'
+            echo 'Jenkins pipeline execution finished.'
         }
     }
 }
