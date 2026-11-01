@@ -7,10 +7,24 @@ def run(cmd) {
     }
 }
 
+def dockerRun(cmd) {
+    if (isUnix()) {
+        sh "docker ${cmd}"
+    } else {
+        bat "\"C:\\Users\\om\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe\" ${cmd}"
+    }
+}
+
 def awsRun(cmd) {
     withCredentials([
-        string(credentialsId: 'aws-key-id', variable: 'AKIAXU3PVMT5ZA33QRH4'),
-        string(credentialsId: 'aws-secret', variable: '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')
+        string(
+            credentialsId: 'aws-key-id',
+            variable: 'AKIAXU3PVMT5ZA33QRH4'
+        ),
+        string(
+            credentialsId: 'aws-secret',
+            variable: 'wZcmyhLcdHx+UPz816l1atMgKGYZ+Ts6XPUluccy'
+        )
     ]) {
         run(cmd)
     }
@@ -37,19 +51,30 @@ pipeline {
 
     environment {
         REGION   = 'ap-south-1'
-        ACCOUNT  = '123456789012'
+        ACCOUNT  = 'YOUR_AWS_ACCOUNT_ID'
         REPO     = 'hello-jenkins'
         INSTANCE = 'none'
+
         REGISTRY = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
         IMG      = "${REPO}:${BUILD_NUMBER}"
         REMOTE   = "${REGISTRY}/${REPO}:latest"
     }
 
     stages {
+
+        stage('Docker Check') {
+            steps {
+                script {
+                    dockerRun('--version')
+                    dockerRun('info')
+                }
+            }
+        }
+
         stage('Build') {
             steps {
                 script {
-                    run "docker build -t ${IMG} ."
+                    dockerRun("build -t ${IMG} .")
                 }
             }
         }
@@ -57,17 +82,26 @@ pipeline {
         stage('Test') {
             steps {
                 script {
-                    run "docker run --rm ${IMG} nginx -t"
+                    dockerRun("run --rm ${IMG} nginx -t")
                 }
             }
         }
 
-        stage('Push') {
+        stage('AWS Authentication') {
+            steps {
+                script {
+                    awsRun('aws sts get-caller-identity')
+                }
+            }
+        }
+
+        stage('Push to AWS ECR') {
             steps {
                 script {
                     ecrLogin()
-                    run "docker tag ${IMG} ${REMOTE}"
-                    run "docker push ${REMOTE}"
+
+                    dockerRun("tag ${IMG} ${REMOTE}")
+                    dockerRun("push ${REMOTE}")
                 }
             }
         }
@@ -78,6 +112,7 @@ pipeline {
                     environment name: 'INSTANCE', value: 'none'
                 }
             }
+
             steps {
                 script {
                     deploy()
