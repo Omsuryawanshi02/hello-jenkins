@@ -19,11 +19,11 @@ def awsRun(cmd) {
     withCredentials([
         string(
             credentialsId: 'aws-key-id',
-            variable: 'AKIAXU3PVMT5ZA33QRH4'
+            variable: AKIAXU3PVMT5ZA33QRH4
         ),
         string(
             credentialsId: 'aws-secret',
-            variable: 'wZcmyhLcdHx+UPz816l1atMgKGYZ+Ts6XPUluccy'
+            variable: wZcmyhLcdHx+UPz816l1atMgKGYZ+Ts6XPUluccy
         )
     ]) {
         run(cmd)
