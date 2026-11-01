@@ -8,16 +8,25 @@ def dockerRun(String cmd) {
 }
 
 // Execute AWS commands using Jenkins-managed credentials
-def awsRun(String cmd) {
-    withCredentials([
-        string(
-            credentialsId: 'aws-key-id',
-            variable: ' AKIAXU3PVMT5ZA33QRH4'
-        ),
-        string(
-            credentialsId: 'aws-secret',
-            variable: 'wZcmyhLcdHx+UPz816l1atMgKGYZ+Ts6XPUluccy'
-        )
+stage('AWS Authentication') {
+    steps {
+        withCredentials([
+            string(
+                credentialsId: 'aws-secret',
+                variable: 'AWS_ACCESS_KEY_ID'
+            ),
+            string(
+                credentialsId: 'aws-secret-key',
+                variable: 'AWS_SECRET_ACCESS_KEY'
+            )
+        ]) {
+            bat '''
+                aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
+                aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
+            '''
+        }
+    }
+}
     ]) {
         if (isUnix()) {
             sh cmd
