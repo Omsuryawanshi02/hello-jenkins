@@ -1,3 +1,51 @@
+
+pipeline {
+    agent any
+
+    stages {
+
+        stage('Docker Check') {
+            steps {
+                bat 'docker --version'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                bat 'docker build -t hello-jenkins:10 .'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                bat 'docker images hello-jenkins'
+            }
+        }
+
+        stage('Push') {
+            steps {
+                echo 'Docker image is ready for pushing.'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deployment stage completed.'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline executed successfully!'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check Console Output.'
+        }
+    }
+}
+
 def run(cmd) {
     if (isUnix()) {
         sh cmd
