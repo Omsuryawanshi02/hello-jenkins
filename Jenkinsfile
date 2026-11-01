@@ -6,15 +6,16 @@ pipeline {
     environment {
         REGION       = 'eu-north-1'
         ACCOUNT      = '525830808827'
-        REPO         = 'hello-jenkins'
-        INSTANCE     = 'none'
+        ECR_REPOSITORY = 'jenkins-web'
 
-        DOCKER_EXE   = 'C:\\Users\\om\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+        REGISTRY = '525830808827.dkr.ecr.ap-south-1.amazonaws.com'
 
-        REGISTRY     = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
-        IMG          = "hello-jenkins:${BUILD_NUMBER}"
-        REMOTE       = "${REGISTRY}/${REPO}:latest"
-        VERSIONED    = "${REGISTRY}/${REPO}:${BUILD_NUMBER}"
+        IMAGE_NAME = 'hello-jenkins'
+
+        DOCKER_EXE = 'C:\\Users\\om\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+
+        // Replace with your actual EC2 instance ID
+       INSTANCE_ID = 'none'
     }
 
     stages {
@@ -22,41 +23,26 @@ pipeline {
         // 1. Docker Check
         stage('Docker Check') {
             steps {
-                script {
-                    if (isUnix()) {
-                        sh 'docker --version'
-                        sh 'docker info'
-                    } else {
-                        bat "\"${env.DOCKER_EXE}\" --version"
-                        bat "\"${env.DOCKER_EXE}\" info"
-                    }
-                }
+                bat "\"${env.DOCKER_EXE}\" --version"
+                bat "\"${env.DOCKER_EXE}\" info"
             }
         }
 
         // 2. Build Docker Image
         stage('Build') {
             steps {
-                script {
-                    if (isUnix()) {
-                        sh "docker build -t ${env.IMG} ."
-                    } else {
-                        bat "\"${env.DOCKER_EXE}\" build -t ${env.IMG} ."
-                    }
-                }
+                bat """
+                    "${env.DOCKER_EXE}" build -t ${env.IMAGE_NAME}:${env.BUILD_NUMBER} .
+                """
             }
         }
 
         // 3. Test Docker Image
         stage('Test') {
             steps {
-                script {
-                    if (isUnix()) {
-                        sh "docker run --rm ${env.IMG} nginx -t"
-                    } else {
-                        bat "\"${env.DOCKER_EXE}\" run --rm ${env.IMG} nginx -t"
-                    }
-                }
+                bat """
+                    "${env.DOCKER_EXE}" run --rm ${env.IMAGE_NAME}:${env.BUILD_NUMBER} nginx -t
+                """
             }
         }
 
@@ -65,107 +51,83 @@ pipeline {
             steps {
                 withCredentials([
                     string(
-                        credentialsId: 'aws-secret',
+                        credentialsId: 'aws-key-id',
                         variable: 'AWS_ACCESS_KEY_ID'
                     ),
                     string(
-                        credentialsId: 'aws-secret-key',
+                        credentialsId: 'aws-secret',
                         variable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
-                    script {
-                        if (isUnix()) {
-                            sh '''
-                                aws sts get-caller-identity
-                            '''
-                        } else {
-                            bat '''
-                                aws sts get-caller-identity
-                            '''
-                        }
-                    }
+                    bat '''
+                        aws sts get-caller-identity
+                    '''
+
+                    echo 'AWS authentication successful!'
                 }
             }
         }
 
-        // 5. Push Image to AWS ECR
+        // 5. Push to AWS ECR
         stage('Push to AWS ECR') {
             steps {
                 withCredentials([
                     string(
-                        credentialsId: 'aws-secret',
+                        credentialsId: 'aws-key-id',
                         variable: 'AWS_ACCESS_KEY_ID'
                     ),
                     string(
-                        credentialsId: 'aws-secret-key',
+                        credentialsId: 'aws-secret',
                         variable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
-                    script {
+                    bat """
+                        aws ecr get-login-password --region ${env.REGION} | "${env.DOCKER_EXE}" login --username AWS --password-stdin ${env.REGISTRY}
 
-                        if (isUnix()) {
-                            sh """
-                                aws ecr get-login-password --region ${env.REGION} | docker login --username AWS --password-stdin ${env.REGISTRY}
+                        "${env.DOCKER_EXE}" tag ${env.IMAGE_NAME}:${env.BUILD_NUMBER} ${env.REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}
 
-                                docker tag ${env.IMG} ${env.VERSIONED}
-                                docker tag ${env.IMG} ${env.REMOTE}
+                        "${env.DOCKER_EXE}" tag ${env.IMAGE_NAME}:${env.BUILD_NUMBER} ${env.REGISTRY}/${env.ECR_REPOSITORY}:latest
 
-                                docker push ${env.VERSIONED}
-                                docker push ${env.REMOTE}
-                            """
-                        } else {
-                            bat """
-                                aws ecr get-login-password --region ${env.REGION} | "${env.DOCKER_EXE}" login --username AWS --password-stdin ${env.REGISTRY}
+                        "${env.DOCKER_EXE}" push ${env.REGISTRY}/${env.ECR_REPOSITORY}:${env.BUILD_NUMBER}
 
-                                "${env.DOCKER_EXE}" tag ${env.IMG} ${env.VERSIONED}
-                                "${env.DOCKER_EXE}" tag ${env.IMG} ${env.REMOTE}
+                        "${env.DOCKER_EXE}" push ${env.REGISTRY}/${env.ECR_REPOSITORY}:latest
+                    """
 
-                                "${env.DOCKER_EXE}" push ${env.VERSIONED}
-                                "${env.DOCKER_EXE}" push ${env.REMOTE}
-                            """
-                        }
-
-                        echo 'Docker image pushed successfully to AWS ECR!'
-                    }
+                    echo 'Successfully pushed images to AWS ECR!'
                 }
             }
         }
 
-        // 6. Optional EC2 Deployment
-        stage('Deploy') {
+        // 6. Deploy to EC2 using SSM
+        stage('Deploy to EC2') {
+
             when {
                 expression {
-                    return env.INSTANCE != 'none' &&
-                           env.INSTANCE?.trim()
+                    return env.INSTANCE_ID?.startsWith('i-')
                 }
             }
 
             steps {
                 withCredentials([
                     string(
-                        credentialsId: 'aws-secret',
+                        credentialsId: 'aws-key-id',
                         variable: 'AWS_ACCESS_KEY_ID'
                     ),
                     string(
-                        credentialsId: 'aws-secret-key',
+                        credentialsId: 'aws-secret',
                         variable: 'AWS_SECRET_ACCESS_KEY'
                     )
                 ]) {
-                    script {
-                        if (isUnix()) {
-                            sh """
-                                aws ssm send-command \
-                                --region ${env.REGION} \
-                                --instance-ids ${env.INSTANCE} \
-                                --document-name AWS-RunShellScript \
-                                --parameters file://deploy.json
-                            """
-                        } else {
-                            bat """
-                                aws ssm send-command --region ${env.REGION} --instance-ids ${env.INSTANCE} --document-name AWS-RunPowerShellScript --parameters file://deploy.json
-                            """
-                        }
-                    }
+                    bat '''
+                        aws ssm send-command ^
+                        --region %REGION% ^
+                        --instance-ids %INSTANCE_ID% ^
+                        --document-name AWS-RunShellScript ^
+                        --parameters file://deploy.json ^
+                        --comment "Deploy hello-jenkins application"
+                    '''
+
+                    echo 'EC2 deployment command submitted!'
                 }
             }
         }
@@ -181,7 +143,7 @@ pipeline {
         }
 
         always {
-            echo 'Jenkins Pipeline Execution Completed.'
+            echo 'Jenkins pipeline execution completed.'
         }
     }
 }
