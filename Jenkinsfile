@@ -2,8 +2,8 @@ def run(cmd) { if (isUnix()) { sh cmd } else { bat cmd } }
 
 def awsRun(cmd) {
   withCredentials([
-    string(credentialsId: 'aws-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-    string(credentialsId: 'aws-secret', variable: 'AWS_SECRET_ACCESS_KEY')
+    string(credentialsId: 'aws-key-id', variable: 'AKIAXU3PVMT5ZA33QRH4'),
+    string(credentialsId: 'aws-secret', variable: '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')
   ]) { run(cmd) }
 }
 
@@ -20,8 +20,8 @@ def deploy() {
 pipeline {
   agent any
   environment {
-    REGION   = 'ap-south-1'
-    ACCOUNT  = '123456789012'
+    REGION   = 'eu-north-1'
+    ACCOUNT  = '525830808827'
     REPO     = 'hello-jenkins'
     INSTANCE = 'none'
     REGISTRY = "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
@@ -64,7 +64,7 @@ def deploy() {
 pipeline {
   agent any
   environment {
-    REGION   = 'ap-south-1'
+    REGION   = 'eu-north-1'
     ACCOUNT  = '525830808827'
     REPO     = 'hello-jenkins'
     INSTANCE = 'none'
