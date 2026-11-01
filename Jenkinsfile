@@ -51,7 +51,7 @@ pipeline {
 
     environment {
         REGION   = 'ap-south-1'
-        ACCOUNT  = 'YOUR_AWS_ACCOUNT_ID'
+        ACCOUNT  = '525830808827'
         REPO     = 'hello-jenkins'
         INSTANCE = 'none'
 
